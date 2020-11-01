@@ -44,6 +44,9 @@ include_once __DIR__ . '/includes/defaults.php';
 // Load recommended plugins.
 include_once __DIR__ . '/includes/plugins.php';
 
+// Load bidirectional acf.
+include_once __DIR__ . '/lib/bidirectional-acf.php';
+
 
 
 if( function_exists('acf_add_options_page') ) {
@@ -1020,3 +1023,230 @@ function mai_split_multiple_quantity_products_to_separate_cart_items( $cart_item
     }
 
 }
+
+
+
+
+
+
+
+
+
+function my_admin_scripts() {
+	wp_enqueue_style('bootstrap-style','https://maxcdn.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css');
+    wp_enqueue_script( 'bootstrap-script', 'https://maxcdn.bootstrapcdn.com/bootstrap/4.5.2/js/bootstrap.min.js', array('jquery'));
+}
+add_action( 'admin_enqueue_scripts', 'my_admin_scripts' );
+
+
+function custom_scripts() {
+	global $post;
+
+	$src = get_stylesheet_directory_uri() . '/inc/dynamic-repeater.js';
+	// make this script dependent on acf-input
+	$depends = array('acf-input');
+	$handle = 'dsf-acf-extension';
+
+	wp_register_script($handle, $src, array('jquery'), '10_5_f');
+
+	$object = 'php_vars';
+
+	$admin_url = admin_url('admin-ajax.php');
+	
+	$data = array(
+		'post_id' => $post->ID,
+		'admin_url' => $admin_url
+	);
+
+	wp_enqueue_script($handle);
+	
+	wp_localize_script($handle, $object, $data);
+	
+	
+}
+
+add_action ('wp_enqueue_scripts', 'custom_scripts', 20);
+
+function add_query_vars_filter( $vars ){
+  $vars[] = "id";
+  return $vars;
+}
+
+add_filter( 'query_vars', 'add_query_vars_filter' );
+
+
+
+// define the function to be fired for logged in users
+function set_default_questions() {
+
+	// nonce check for an extra layer of security, the function will exit if it fails
+// 	if ( !wp_verify_nonce( $_REQUEST['nonce'], "set_default_questions_nonce")) {
+// 		exit("Woof Woof Woof");
+// 	}   
+
+	// fetch refernce for a section (sent via jquery)
+	$reference_id = $_REQUEST["reference_id"];
+	
+	$images = get_field('reference_images', $reference_id);
+	$orig_default_questions = get_field('default_questions', $reference_id);
+	$default_questions = array();
+	
+	foreach($orig_default_questions as &$question) {
+		$myquestion = array(
+			'ID' => $question->ID,
+			'Question Text' => $question->post_content,
+			'Question Title' => $question->post_title,
+			'Possible Answers' => get_field('possible_answers', $question->ID),
+			'Answer Reasoning' => get_field('answer_reasoning', $question->ID),
+			'Learning Objectives' => get_field('learning_objectives', $quesiton->ID)
+		);
+		array_push($default_questions, $myquestion);
+	}
+	
+	$data = array(
+		'reference_id' => $reference_id,
+		'images' => $images,
+		'default_questions' => $default_questions
+	);
+	
+	echo json_encode($data);
+
+	// don't forget to end your scripts with a die() function - very important
+	die();
+}
+
+// define the function to be fired for logged in users
+function get_references() {
+
+	$args = array(
+		'posts_per_page'   => -1,
+		'post_type'=> 'references',
+		'orderby' => 'title',
+		'order'    => 'ASC'
+	);              
+	
+	$new_arr = array();
+
+	$the_query = new WP_Query( $args );
+	if($the_query->have_posts() ) : 
+		while ( $the_query->have_posts() ) : 
+		   $the_query->the_post(); 
+	
+			$myid = get_the_ID();
+			$mytitle = get_the_title();
+	
+			$my_arr = array(
+				'id' => $myid,
+				'text' => $mytitle
+			); 
+			array_push($new_arr, $my_arr);
+		   // content goes here
+		endwhile; 
+		wp_reset_postdata(); 
+	else: 
+	endif;
+	
+// 	$data = array(
+// // 		'reference_id' => $reference_id
+// 	);
+	
+	echo json_encode($new_arr);
+
+	// don't forget to end your scripts with a die() function - very important
+	die();
+}
+
+function delete_assessment() {
+	$delete_post_id = $_REQUEST["post_to_delete"];
+	wp_trash_post( $delete_post_id );
+	
+	die();
+}
+function new_assessment() {
+	$user_info = wp_get_current_user();
+	$author_part = $user_info->user_login . ' - '; 
+        $title =  $author_part . $_REQUEST["mydata"]["title"];
+        $description = $_REQUEST["mydata"]["intro"];
+		$questions = $_REQUEST["mydata"]["questions"];
+		$reference_id = $_REQUEST["mydata"]["reference_id"];
+    // Add the content of the form to $post as an array
+    $new_post = array(
+        'post_title'    => $title,
+        'post_status'   => 'publish',           // Choose: publish, preview, future, draft, etc.
+        'post_type' => 'assessments'  //'post',page' or use a custom post type if you want to
+    );
+    //save the new post
+    $pid = wp_insert_post($new_post); 
+	
+	$new_assessment_data = array();
+	$new_assessment_data["title"] = $title;
+	$new_assessment_data["intro"] = $description;
+	$new_assessment_data["reference_id"] = $reference_id;
+	$new_assessment_data["questions"] = $questions;
+	
+	update_field('brief_intro', $description, $pid);
+	
+	$repeater_key = 'field_5ee3af2d8ff6d'; // field key of 'sections' repeater
+	
+	$sections = array(); // push sections to this repeater
+	
+	$all_questions = array();
+	
+	foreach($questions as &$question) {
+		$possible_answers = array();
+		
+		foreach($question["possible_answers"] as &$possible_answer) {
+			$correct_answer = 0;
+			if($possible_answer["is_checked"] == "true"){ 
+				$correct_answer = 1; 
+			}
+			$an_answer = array(
+				'field_5f568880d37b2' => $possible_answer["answer_text"],
+				'field_5f568880d37b3' => $correct_answer
+			);
+			array_push($possible_answers, $an_answer);
+		}
+		
+		$q_array = array(
+			'field_5f568836d37ae' => $question["question_id"], //question id
+			'field_5f568852d37af' => $question["question_text"], //question text
+			'field_5f56889ed37b4' => $question["answer_reasoning"], //answer reasoning
+			'field_5f5688a8d37b5' => $question["learning_objectives"], //learning objectives
+			'field_5f568880d37b1' => $possible_answers //possible answers
+		);
+		
+		array_push($all_questions, $q_array);
+	}
+	
+	  // nested array for every row of repeater
+	  $section = array(
+		// field key => value pairs for each sub field
+		'field_5ee3b2a78ff6f' => $reference_id, // reference field
+		'field_5f56828ed37ad' => $all_questions
+		// next row in nested repeater
+	  );
+	
+	array_push($sections, $section);
+	
+	$new_assessment_data["all_questions"] = $all_questions;
+	
+	update_field($repeater_key, $sections, $pid);
+	
+	echo json_encode($new_assessment_data);
+	
+	// don't forget to end your scripts with a die() function - very important
+	die();
+}
+
+
+
+
+
+
+// define the actions for the two hooks created, first for logged in users and the next for logged out users
+add_action("wp_ajax_set_default_questions", "set_default_questions");
+add_action("wp_ajax_get_references", "get_references");
+add_action("wp_ajax_delete_assessment", "delete_assessment");
+add_action("wp_ajax_new_assessment", "new_assessment");
+add_action("wp_ajax_save_changes", "save_changes");
+
